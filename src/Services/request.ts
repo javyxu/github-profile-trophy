@@ -1,8 +1,7 @@
 import { soxa } from "../../deps.ts";
 import {
   EServiceKindError,
-  GithubErrorResponse,
-  GithubExceedError,
+  GithubError,
   QueryDefaultResponse,
   ServiceError,
 } from "../Types/index.ts";
@@ -20,30 +19,62 @@ export async function requestGithubData<T = unknown>(
   }) as QueryDefaultResponse<{ user: T }>;
   const responseData = response.data;
 
+  if (responseData?.errors?.length) {
+    console.error(
+      "GitHub GraphQL errors:",
+      JSON.stringify(responseData.errors, null, 2),
+    );
+
+    throw new ServiceError(
+      responseData.errors
+        .map((error) => error.message)
+        .join("; "),
+      getGraphQLErrorKind(responseData.errors),
+    );
+  }
+
   if (responseData?.data?.user) {
     return responseData.data.user;
   }
 
-  throw handleError(
-    responseData as unknown as GithubErrorResponse | GithubExceedError,
-  );
+  throw handleError(responseData);
+}
+
+function getGraphQLErrorKind(errors: GithubError[]): EServiceKindError {
+  const errorTypes = errors.map((error) => error.type);
+
+  if (
+    errorTypes.some((type) => type?.includes(EServiceKindError.RATE_LIMIT))
+  ) {
+    return EServiceKindError.RATE_LIMIT;
+  }
+
+  if (errorTypes.every((type) => type === EServiceKindError.NOT_FOUND)) {
+    return EServiceKindError.NOT_FOUND;
+  }
+
+  return EServiceKindError.UPSTREAM;
 }
 
 function handleError(
-  reponseErrors: GithubErrorResponse | GithubExceedError,
+  responseData: {
+    data?: unknown;
+    errors?: GithubError[];
+    message?: string;
+    documentation_url?: string;
+  },
 ): ServiceError {
   let isRateLimitExceeded = false;
-  const arrayErrors = (reponseErrors as GithubErrorResponse)?.errors || [];
-  const objectError = (reponseErrors as GithubExceedError) || {};
+  const arrayErrors = responseData?.errors || [];
 
-  if (Array.isArray(arrayErrors)) {
+  if (Array.isArray(arrayErrors) && arrayErrors.length > 0) {
     isRateLimitExceeded = arrayErrors.some((error) =>
       error.type.includes(EServiceKindError.RATE_LIMIT)
     );
   }
 
-  if (objectError?.message) {
-    isRateLimitExceeded = objectError?.message.includes(
+  if (responseData?.message) {
+    isRateLimitExceeded = responseData.message.toLowerCase().includes(
       "rate limit",
     );
   }

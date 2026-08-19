@@ -1,8 +1,8 @@
 type Language = { name: string };
-type Stargazers = { totalCount: number };
 type Repository = {
   languages: { nodes: Language[] };
-  stargazers: Stargazers;
+  stargazerCount: number;
+  createdAt: string;
 };
 export type GitHubUserRepository = {
   repositories: {
@@ -40,6 +40,12 @@ export type GitHubUserActivity = {
     totalCount: number;
   };
 };
+
+export type GitHubUserAll =
+  & GitHubUserActivity
+  & GitHubUserIssue
+  & GitHubUserPullRequest
+  & GitHubUserRepository;
 export class UserInfo {
   public readonly totalCommits: number;
   public readonly totalFollowers: number;
@@ -55,6 +61,11 @@ export class UserInfo {
   public readonly ancientAccount: number;
   public readonly joined2020: number;
   public readonly ogAccount: number;
+
+  static fromCombined(data: GitHubUserAll): UserInfo {
+    return new UserInfo(data, data, data, data);
+  }
+
   constructor(
     userActivity: GitHubUserActivity,
     userIssue: GitHubUserIssue,
@@ -66,7 +77,7 @@ export class UserInfo {
       userActivity.contributionsCollection.totalCommitContributions;
     const totalStargazers = userRepository.repositories.nodes.reduce(
       (prev: number, node: Repository) => {
-        return prev + node.stargazers.totalCount;
+        return prev + node.stargazerCount;
       },
       0,
     );
@@ -81,20 +92,30 @@ export class UserInfo {
         });
       }
     });
+
+    // Find the earliest repository creation date
+    let earliestRepoDate = userActivity.createdAt; // start with the oldest possible
+
+    earliestRepoDate = userRepository.repositories.nodes.reduce(
+      (earliest, node) => {
+        return new Date(node.createdAt).getTime() < new Date(earliest).getTime()
+          ? node.createdAt
+          : earliest;
+      },
+      earliestRepoDate,
+    );
+
     const durationTime = new Date().getTime() -
-      new Date(userActivity.createdAt).getTime();
+      new Date(earliestRepoDate).getTime();
     const durationYear = new Date(durationTime).getUTCFullYear() - 1970;
     const durationDays = Math.floor(
       durationTime / (1000 * 60 * 60 * 24) / 100,
     );
-    const ancientAccount =
-      new Date(userActivity.createdAt).getFullYear() <= 2010 ? 1 : 0;
-    const joined2020 = new Date(userActivity.createdAt).getFullYear() == 2020
+    const ancientAccount = new Date(earliestRepoDate).getFullYear() <= 2010
       ? 1
       : 0;
-    const ogAccount = new Date(userActivity.createdAt).getFullYear() <= 2008
-      ? 1
-      : 0;
+    const joined2020 = new Date(earliestRepoDate).getFullYear() == 2020 ? 1 : 0;
+    const ogAccount = new Date(earliestRepoDate).getFullYear() <= 2008 ? 1 : 0;
 
     this.totalCommits = totalCommits;
     this.totalFollowers = userActivity.followers.totalCount;
